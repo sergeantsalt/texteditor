@@ -12,6 +12,7 @@
 // terminal
 struct termios orig;
 
+
 void die(char *s)
 {
     perror(s);
