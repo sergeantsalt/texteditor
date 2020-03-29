@@ -1,3 +1,8 @@
+
+# Configure
+config.h
+libtool
+
 # Automake
 # http://www.gnu.org/software/automake
 
