@@ -6,11 +6,20 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
+#include <string.h>
 // includes
 
+/**
+ * @brief This macro does a bitwise and against 0001 1111
+ * which clears out the key modifiers like CTRL so we can
+ * compare against the char value to test which key was pressed.
+ * */
 #define CTRL_K(k) ((k)&0x1f)
 
 // terminal
+/**
+ * @brief Holds the size of our terminal.
+ * */
 struct editorConfig {
   int screenRows;
   int screenCols;
@@ -19,17 +28,28 @@ struct editorConfig {
 
 struct editorConfig E;
 
+/**
+ * @brief Exits with an error.
+ * */
 void die(char *s) {
   perror(s);
   exit(1);
 }
 
+/**
+ * @brief Resets the attributes of the terminal to their original
+ * settings.
+ * */
 void disableRawMode() {
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig) == -1) {
     die("tcsetattr");
   }
 }
 
+/**
+ * @brief Prepares the terminal for editing code by disabling certain
+ * signals like ctrl+C
+ * */
 void enableRawMode() {
   if (tcgetattr(STDIN_FILENO, &E.orig) == -1) {
     die("tcgetattr");
@@ -49,6 +69,9 @@ void enableRawMode() {
   }
 }
 
+/**
+ * @brief Reads a key press input.
+ * */
 char editorReadKey() {
   int n;
   char c;
@@ -61,6 +84,9 @@ char editorReadKey() {
   return c;
 }
 
+/**
+ * @brief Gets the x/y positino of the cursor.
+ * */
 int getCursorPosition(int *rows, int *cols) {
   if (write(STDIN_FILENO, "\x1b[6n", 4) != 4) {
     return -1;
@@ -80,7 +106,7 @@ int getCursorPosition(int *rows, int *cols) {
 
   buf[i] = '\0';
 
-  printf("\r\nbuf[1]: '%s'\r\n", &buf[1]);
+  // printf("\r\nbuf[1]: '%s'\r\n", &buf[1]);
 
   if (buf[0] != '\x1b' || buf[1] != '[') return -1;
   if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
@@ -88,6 +114,9 @@ int getCursorPosition(int *rows, int *cols) {
   return 0;
 }
 
+/**
+ * @brief Gets window size in rows and columns.
+ * */
 int getWindowSize(int *rows, int *cols) {
   struct winsize ws;
 
@@ -102,10 +131,36 @@ int getWindowSize(int *rows, int *cols) {
   return 0;
 }
 
+struct abuf {
+  char *b;
+  int len;
+};
+
+/**
+ * @brief Initializes screen redraw buffer string.
+ * */
+#define ABUF_INIT {NULL, 0}
+
 void initEditor() {
   if (getWindowSize(&E.screenRows, &E.screenCols) == -1) {
     die("getWindowSize");
   }
+}
+
+void abAppend(struct abuf *ab, const char *s, int len) {
+  char *newString = realloc(ab->b, ab->len + len);
+
+  if (newString == NULL) {
+    return;
+  }
+
+  memcpy(&newString[ab->len], s, len);
+  ab->b = newString;
+  ab->len += len;
+}
+
+void abFree(struct abuf *ab) {
+  free(ab->b);
 }
 
 // terminal
@@ -130,19 +185,30 @@ void editorProcessKeypress() {
 
 // output
 
-void editorDrawRows() {
-  for (int y = 0; y < 24; y++) {
-    write(STDOUT_FILENO, "~\r\n", 3);
+void editorDrawRows(struct abuf *ab) {
+  for (int y = 0; y < E.screenRows; y++) {
+    abAppend(ab, "~", 1);
+
+    if (y < E.screenRows - 1) {
+      abAppend(ab, "\r\n", 2);
+    }
   }
 }
 
 void editorRefreshScreen() {
-  write(STDOUT_FILENO, "\x1b[2J", 4);
-  write(STDOUT_FILENO, "\x1b[H", 3);
+  struct abuf ab = ABUF_INIT;
 
-  editorDrawRows();
+  abAppend(&ab, "\x1b[?25l", 6);
+  abAppend(&ab, "\x1b[2j", 4);
+  abAppend(&ab, "\x1b[H", 3);
 
-  write(STDOUT_FILENO, "\x1b[H", 3);
+  editorDrawRows(&ab);
+
+  abAppend(&ab, "\x1b[H", 3);
+  abAppend(&ab, "\x1b[?25h", 6);
+
+  write(STDOUT_FILENO, ab.b, ab.len);
+  abFree(&ab);
 }
 
 // output
