@@ -1,3 +1,8 @@
+/**
+ * @mainpage kilo
+ * @brief This is kilo, a command line text editor
+ * */
+
 // includes
 #include <ctype.h>
 #include <errno.h>
