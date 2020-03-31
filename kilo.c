@@ -1,5 +1,5 @@
 /**
- * @mainpage kilo
+ * @file kilo.c
  * @brief This is kilo, a command line text editor
  * */
 
@@ -15,17 +15,30 @@
 // includes
 
 /**
+ * @brief Version info
+ * */
+#define KILO_VERSION "0.0.1"
+
+/**
  * @brief This macro does a bitwise and against 0001 1111
  * which clears out the key modifiers like CTRL so we can
  * compare against the char value to test which key was pressed.
  * */
 #define CTRL_K(k) ((k)&0x1f)
 
+enum editorKey {
+  ARROW_LEFT = 1000,
+  ARROW_RIGHT,
+  ARROW_UP,
+  ARROW_DOWN,
+};
+
 // terminal
 /**
  * @brief Holds the size of our terminal.
  * */
 struct editorConfig {
+  int cx, cy;
   int screenRows;
   int screenCols;
   struct termios orig;
@@ -75,15 +88,38 @@ void enableRawMode() {
 }
 
 /**
+ * @brief Gets keys that are sent with modifiers
+ * */
+int parseEscapeSeq() {
+  char seq[3];
+
+  if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+  if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
+  if (seq[0] == '[') {
+    switch (seq[1]) {
+      case 'A': return ARROW_UP;
+      case 'B': return ARROW_DOWN;
+      case 'C': return ARROW_RIGHT;
+      case 'D': return ARROW_LEFT;
+    }
+  }
+
+  return '\x1b';
+}
+
+/**
  * @brief Reads a key press input.
  * */
-char editorReadKey() {
-  int n;
+int editorReadKey() {
+  int nread;
   char c;
-  if ((n = read(STDIN_FILENO, &c, 1)) == -1) {
-    if (errno != EAGAIN) {
-      die("read");
-    }
+  while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+    if (nread == -1 && errno != EAGAIN) die("read");
+  }
+
+  if (c == '\x1b') {
+    return parseEscapeSeq();
   }
 
   return c;
@@ -146,12 +182,21 @@ struct abuf {
  * */
 #define ABUF_INIT {NULL, 0}
 
+/**
+ * @brief Gets the window setup for drawing
+ * */
 void initEditor() {
+  E.cx = 0;
+  E.cy = 0;
+  
   if (getWindowSize(&E.screenRows, &E.screenCols) == -1) {
     die("getWindowSize");
   }
 }
 
+/**
+ * @brief Appends the screen text buffer
+ * */
 void abAppend(struct abuf *ab, const char *s, int len) {
   char *newString = realloc(ab->b, ab->len + len);
 
@@ -164,6 +209,9 @@ void abAppend(struct abuf *ab, const char *s, int len) {
   ab->len += len;
 }
 
+/**
+ * @brief Frees the buffer
+ * */
 void abFree(struct abuf *ab) {
   free(ab->b);
 }
@@ -172,14 +220,41 @@ void abFree(struct abuf *ab) {
 
 // input
 
+void editorMoveCursor(int key) {
+  switch (key) {
+    case ARROW_LEFT:
+      E.cx--;
+      break;
+    case ARROW_RIGHT:
+      E.cx++;
+      break;
+    case ARROW_UP:
+      E.cy--;
+      break;
+    case ARROW_DOWN:
+      E.cy++;
+      break;
+  }
+}
+
+/**
+ * @brief Process key presses
+ * */
 void editorProcessKeypress() {
-  char c = editorReadKey();
+  int c = editorReadKey();
 
   switch (c) {
     case CTRL_K('q'):
       write(STDOUT_FILENO, "\x1b[2J", 4);
       write(STDOUT_FILENO, "\x1b[H", 3);
       exit(0);
+      break;
+
+    case ARROW_UP:
+    case ARROW_DOWN:
+    case ARROW_LEFT:
+    case ARROW_RIGHT:
+      editorMoveCursor(c);
       break;
     default:
       break;
@@ -188,28 +263,64 @@ void editorProcessKeypress() {
 
 // input
 
-// output
+void getWelcomeString(char *buffer, int arrayLen, int *sLen) {
+  int len = snprintf(buffer, arrayLen,
+    "Kilo editor -- version %s", KILO_VERSION);
+  if (len > E.screenCols)
+    len = E.screenCols;
 
+  *sLen = len;
+}
+
+// output
+/**
+ * @brief Draws tildes that make up the border
+ * */
 void editorDrawRows(struct abuf *ab) {
   for (int y = 0; y < E.screenRows; y++) {
-    abAppend(ab, "~", 1);
+    if (y == E.screenRows / 3) {
+      char welcome[80];
+      int len;
 
+      getWelcomeString(welcome, sizeof(welcome), &len);
+      int padding = (E.screenCols - len) / 2;
+      if (padding) {
+        abAppend(ab, "~", 1);
+        padding--;
+      }
+
+      while (padding--) abAppend(ab, " ", 1);
+
+      abAppend(ab, welcome, len);
+    } else {
+      abAppend(ab, "~", 1);
+    }
+
+    // Erases to the right of the cursor
+    // args 3-0 default 0
+    abAppend(ab, "\x1b[K", 3);
     if (y < E.screenRows - 1) {
       abAppend(ab, "\r\n", 2);
     }
   }
 }
 
+/**
+ * @brief Refreshes the screen.
+ * */
 void editorRefreshScreen() {
   struct abuf ab = ABUF_INIT;
 
   abAppend(&ab, "\x1b[?25l", 6);
-  abAppend(&ab, "\x1b[2J", 4);
   abAppend(&ab, "\x1b[H", 3);
 
   editorDrawRows(&ab);
 
-  abAppend(&ab, "\x1b[H", 3);
+  // Command H moves the cursor to the int values given
+  char buf[32];
+  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+  abAppend(&ab, buf, strlen(buf));
+
   abAppend(&ab, "\x1b[?25h", 6);
 
   write(STDOUT_FILENO, ab.b, ab.len);
