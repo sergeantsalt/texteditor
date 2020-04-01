@@ -26,6 +26,9 @@
  * */
 #define CTRL_K(k) ((k)&0x1f)
 
+/**
+ * @brief All special keypresses.
+ * */
 enum editorKey {
   ARROW_LEFT = 1000,
   ARROW_RIGHT,
