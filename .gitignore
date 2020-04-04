@@ -1,3 +1,12 @@
+
+# Configure
+config.h
+libtool
+
+# Docs
+/html
+/latex
+
 # Automake
 # http://www.gnu.org/software/automake
 
